@@ -1,5 +1,6 @@
 use anyhow::Result;
-use yazi_macro::{render, succ};
+use yazi_fs::SortBy;
+use yazi_macro::{act, render, succ};
 use yazi_parser::mgr::LinemodeOpt;
 use yazi_shared::data::Data;
 
@@ -13,11 +14,20 @@ impl Actor for Linemode {
 	const NAME: &str = "linemode";
 
 	fn act(cx: &mut Ctx, opt: Self::Options) -> Result<Data> {
-		let tab = cx.tab_mut();
+		let mut needs_resort = false;
 
-		if opt.new != tab.pref.linemode {
-			tab.pref.linemode = opt.new.into_owned();
-			render!();
+		{
+			let tab = cx.tab_mut();
+			if opt.new != tab.pref.linemode {
+				tab.pref.linemode = opt.new.into_owned();
+				render!();
+
+				needs_resort = tab.pref.sort_by == SortBy::Linemode;
+			}
+		}
+
+		if needs_resort {
+			act!(mgr:sort, cx)?;
 		}
 
 		succ!();

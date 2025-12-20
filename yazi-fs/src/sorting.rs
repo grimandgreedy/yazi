@@ -14,6 +14,7 @@ pub enum SortBy {
 	Natural,
 	Size,
 	Random,
+	Linemode,
 }
 
 impl FromStr for SortBy {
@@ -35,6 +36,7 @@ impl Display for SortBy {
 			Self::Natural => "natural",
 			Self::Size => "size",
 			Self::Random => "random",
+			Self::Linemode => "linemode",
 		})
 	}
 }

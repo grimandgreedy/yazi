@@ -40,6 +40,7 @@ impl From<&Preference> for FilesSorter {
 			reverse:   value.sort_reverse,
 			dir_first: value.sort_dir_first,
 			translit:  value.sort_translit,
+			linemode:  value.linemode.clone(),
 		}
 	}
 }

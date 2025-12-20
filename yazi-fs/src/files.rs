@@ -15,6 +15,7 @@ pub struct Files {
 	pub revision: u64,
 
 	pub sizes: HashMap<PathBufDyn, u64>,
+	pub linemode_strings: HashMap<PathBufDyn, String>,
 
 	sorter:      FilesSorter,
 	filter:      Option<Filter>,
@@ -82,6 +83,22 @@ impl Files {
 			self.revision += 1;
 		}
 		self.sizes.extend(sizes);
+	}
+
+	pub fn update_linemode_strings(&mut self, mut linemode_strings: HashMap<PathBufDyn, String>) {
+		if linemode_strings.len() <= 50 {
+			linemode_strings.retain(|k, v| self.linemode_strings.get(k) != Some(v));
+		}
+
+		if linemode_strings.is_empty() {
+			return;
+		}
+
+		if self.sorter.by == SortBy::Linemode {
+			self.revision += 1;
+		}
+
+		self.linemode_strings.extend(linemode_strings);
 	}
 
 	pub fn update_ioerr(&mut self) {
@@ -250,7 +267,7 @@ impl Files {
 		}
 
 		self.version = self.revision;
-		self.sorter.sort(&mut self.items, &self.sizes);
+		self.sorter.sort(&mut self.items, &self.sizes, &self.linemode_strings);
 		true
 	}
 
@@ -304,14 +321,14 @@ impl Files {
 			self.hidden = hidden;
 			if !items.is_empty() {
 				self.items.extend(items);
-				self.sorter.sort(&mut self.items, &self.sizes);
+				self.sorter.sort(&mut self.items, &self.sizes, &self.linemode_strings);
 			}
 			return true;
 		}
 
 		let it = mem::take(&mut self.items).into_iter().chain(mem::take(&mut self.hidden));
 		(self.hidden, self.items) = self.split_files(it);
-		self.sorter.sort(&mut self.items, &self.sizes);
+		self.sorter.sort(&mut self.items, &self.sizes, &self.linemode_strings);
 		true
 	}
 

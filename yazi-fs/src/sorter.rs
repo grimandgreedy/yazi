@@ -6,17 +6,18 @@ use yazi_shared::{natsort, path::PathBufDyn, translit::Transliterator, url::UrlL
 
 use crate::{File, SortBy};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilesSorter {
 	pub by:        SortBy,
 	pub sensitive: bool,
 	pub reverse:   bool,
 	pub dir_first: bool,
 	pub translit:  bool,
+	pub linemode:  String,
 }
 
 impl FilesSorter {
-	pub(super) fn sort(&self, items: &mut [File], sizes: &HashMap<PathBufDyn, u64>) {
+	pub(super) fn sort(&self, items: &mut [File], sizes: &HashMap<PathBufDyn, u64>, linemode_strings: &HashMap<PathBufDyn, String>) {
 		if items.is_empty() {
 			return;
 		}
@@ -62,6 +63,24 @@ impl FilesSorter {
 			SortBy::Random => {
 				let mut rng = SmallRng::from_os_rng();
 				items.sort_unstable_by(|a, b| self.cmp(rng.next_u64(), rng.next_u64(), self.promote(a, b)))
+			}
+			SortBy::Linemode => {
+				items.sort_unstable_by(|a, b| {
+					let promote = self.promote(a, b);
+					if promote != Ordering::Equal {
+						return promote;
+					}
+
+					// Get linemode string values for these files
+					let aa = linemode_strings.get(&a.urn()).map(|s| s.as_bytes()).unwrap_or(b"");
+					let bb = linemode_strings.get(&b.urn()).map(|s| s.as_bytes()).unwrap_or(b"");
+
+					// Use natural sort (smart numeric sorting)
+					let ordering = natsort(aa, bb, !self.sensitive);
+					let ord = if self.reverse { ordering.reverse() } else { ordering };
+
+					if ord == Ordering::Equal { by_alphabetical(a, b) } else { ord }
+				});
 			}
 		}
 	}

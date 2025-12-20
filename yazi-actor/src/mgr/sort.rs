@@ -1,14 +1,71 @@
 use anyhow::Result;
+use hashbrown::HashMap;
+use mlua::{IntoLua, ObjectLike};
+use yazi_binding::File;
+use yazi_binding::elements::Line;
 use yazi_core::tab::Folder;
 use yazi_dds::spark::SparkKind;
-use yazi_fs::{FilesSorter, FolderStage};
+use yazi_fs::{FilesSorter, FolderStage, SortBy};
 use yazi_macro::{act, render, render_and, succ};
 use yazi_parser::mgr::SortOpt;
-use yazi_shared::{Source, data::Data};
+use yazi_plugin::LUA;
+use yazi_shared::{Source, data::Data, path::PathBufDyn};
 
-use crate::{Actor, Ctx};
+use crate::{lives::Lives, Actor, Ctx};
 
 pub struct Sort;
+
+impl Sort {
+	/// Compute linemode string values for all files in a folder by calling Lua
+	fn compute_linemode_values(
+		folder: &Folder,
+		linemode: &str,
+	) -> Result<HashMap<PathBufDyn, String>> {
+		let mut values = HashMap::new();
+
+		// Get the Linemode table from Lua
+		let linemode_table: mlua::Table = LUA.globals().raw_get("Linemode")?;
+
+		for file in folder.files.iter() {
+			// Create a Linemode instance for this file
+			let file_ud = File::new(file.clone()).into_lua(&LUA)?;
+			let linemode_instance: mlua::Table = linemode_table.call_method("new", file_ud)?;
+
+			// Call the linemode function (e.g., Linemode:size(), Linemode:duration(), etc.)
+			if let Ok(result) = linemode_instance.call_method::<mlua::Value>(linemode, ()) {
+				// Extract the string value from the result
+				let value_str = match result {
+					mlua::Value::String(s) => s.to_str()?.to_string(),
+					mlua::Value::Table(t) => {
+						// For ui.Line objects, try to extract text
+						if let Ok(s) = t.call_method::<String>("__tostring", ()) {
+							s
+						} else {
+							format!("{:?}", t)
+						}
+					}
+					mlua::Value::UserData(ud) => {
+						// Handle ui.Line UserData by extracting plain text from spans
+						if let Ok(line) = ud.borrow::<Line>() {
+							line.iter().map(|span| &*span.content).collect::<String>()
+						} else {
+							String::new()
+						}
+					}
+					mlua::Value::Number(n) => n.to_string(),
+					mlua::Value::Integer(i) => i.to_string(),
+					_ => String::new(),
+				};
+
+				if !value_str.is_empty() {
+					values.insert(file.urn().into(), value_str);
+				}
+			}
+		}
+
+		Ok(values)
+	}
+}
 
 impl Actor for Sort {
 	type Options = SortOpt;
@@ -24,13 +81,49 @@ impl Actor for Sort {
 		pref.sort_translit = opt.translit.unwrap_or(pref.sort_translit);
 
 		let sorter = FilesSorter::from(&*pref);
+		// If sorting by linemode, compute the linemode values first
+		if sorter.by == SortBy::Linemode {
+			// Compute linemode values for current, parent, and hovered folders
+			let values_current = Lives::scope(&cx.core, || {
+				Ok(Self::compute_linemode_values(&cx.current(), &sorter.linemode)
+					.unwrap_or_else(|_| HashMap::new()))
+			})?;
+
+			let values_parent = if cx.parent().is_some() {
+				Lives::scope(&cx.core, || {
+					Ok(Self::compute_linemode_values(cx.parent().unwrap(), &sorter.linemode)
+						.unwrap_or_else(|_| HashMap::new()))
+				})?
+			} else {
+				HashMap::new()
+			};
+
+			let values_hovered = if cx.hovered_folder().is_some() {
+				Lives::scope(&cx.core, || {
+					Ok(Self::compute_linemode_values(cx.hovered_folder().unwrap(), &sorter.linemode)
+						.unwrap_or_else(|_| HashMap::new()))
+				})?
+			} else {
+				HashMap::new()
+			};
+
+			// Update the caches
+			cx.current_mut().files.update_linemode_strings(values_current);
+			if let Some(parent) = cx.parent_mut() {
+				parent.files.update_linemode_strings(values_parent);
+			}
+			if let Some(hovered) = cx.hovered_folder_mut() {
+				hovered.files.update_linemode_strings(values_hovered);
+			}
+		}
+
 		let hovered = cx.hovered().map(|f| f.urn().to_owned());
 		let apply = |f: &mut Folder| {
 			if f.stage == FolderStage::Loading {
 				render!();
 				false
 			} else {
-				f.files.set_sorter(sorter);
+				f.files.set_sorter(sorter.clone());
 				render_and!(f.files.catchup_revision())
 			}
 		};
